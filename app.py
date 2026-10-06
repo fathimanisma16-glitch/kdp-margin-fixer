@@ -282,12 +282,45 @@ with tab_cover:
     total_w = (2 * trim_w) + spine_w + (2 * BLEED_IN)
     total_h = trim_h + (2 * BLEED_IN)
     
-    st.info(f"📐 **KDP Target Dimensions:** Total Canvas = **{total_w:.3f}\" × {total_h:.3f}\"** | Spine Width = **{spine_w:.3f}\"**")
+   st.info(f"📐 **KDP Target Dimensions:** Total Canvas = **{total_w:.3f}\" × {total_h:.3f}\"** | Spine Width = **{spine_w:.3f}\"**")
     
+    # Custom CSS to enlarge and turn the radio buttons into prominent clickable badges
+    st.markdown("""
+        <style>
+        div[role="radiogroup"] {
+            gap: 1rem;
+            margin-top: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        div[role="radiogroup"] label {
+            background-color: #f8fafc;
+            border: 2px solid #cbd5e1;
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        div[role="radiogroup"] label:hover {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        div[role="radiogroup"] label p {
+            font-size: 1.15rem !important;
+            font-weight: 700 !important;
+            color: #1e293b !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("#### 🛠️ Choose Your Cover Workflow:")
     cover_mode = st.radio(
         "Choose Cover Mode:",
-        ["✨ 1-Click Wrap Assembler (Upload Front Cover Only)", "🔧 KDP Reject Fixer (Resize Existing Wrap PDF)"],
-        horizontal=True
+        [
+            "✨ 1-Click Wrap Assembler (Upload Front Cover Only)",
+            "🔧 KDP Reject Fixer (Resize Existing Wrap PDF)"
+        ],
+        horizontal=True,
+        label_visibility="collapsed"
     )
     
     st.divider()
