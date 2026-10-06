@@ -121,14 +121,14 @@ def assemble_wrap_cover(front_img_bytes, trim_w, trim_h, spine_w, total_w, total
         for paragraph in back_blurb.split("\n"):
             if paragraph.strip():
                 lines.extend(textwrap.wrap(paragraph, width=int(text_safe_w / 6.5)))
-                lines.append("")  # paragraph spacing
+                lines.append("")
             else:
                 lines.append("")
                 
         line_height = 14
         curr_y = top_y
         for line in lines:
-            if curr_y > bc_y + bc_h_pt + 20: # Keep above barcode box
+            if curr_y > bc_y + bc_h_pt + 20:
                 c.drawString(text_safe_x, curr_y, line)
                 curr_y -= line_height
 
@@ -243,7 +243,7 @@ with tab_interior:
             
             with pv_col2:
                 st.markdown("**Page 2 (Verso / Left Page)**")
-                st.caption("➡️ *Notice the wider gutter on the RIGHT (Spine edge)*")
+                st.caption("➡️️ *Notice the wider gutter on the RIGHT (Spine edge)*")
                 if img_p2:
                     st.image(img_p2, use_container_width=True)
             
@@ -282,20 +282,20 @@ with tab_cover:
     total_w = (2 * trim_w) + spine_w + (2 * BLEED_IN)
     total_h = trim_h + (2 * BLEED_IN)
     
-   st.info(f"📐 **KDP Target Dimensions:** Total Canvas = **{total_w:.3f}\" × {total_h:.3f}\"** | Spine Width = **{spine_w:.3f}\"**")
+    st.info(f"📐 **KDP Target Dimensions:** Total Canvas = **{total_w:.3f}\" × {total_h:.3f}\"** | Spine Width = **{spine_w:.3f}\"**")
     
-    # Custom CSS to enlarge and turn the radio buttons into prominent clickable badges
+    # Custom CSS to enlarge and turn radio options into large, clickable button cards
     st.markdown("""
         <style>
         div[role="radiogroup"] {
-            gap: 1rem;
-            margin-top: 0.5rem;
-            margin-bottom: 1rem;
+            gap: 1.2rem;
+            margin-top: 0.6rem;
+            margin-bottom: 1.2rem;
         }
         div[role="radiogroup"] label {
             background-color: #f8fafc;
             border: 2px solid #cbd5e1;
-            padding: 12px 20px;
+            padding: 14px 22px;
             border-radius: 10px;
             cursor: pointer;
             transition: all 0.2s ease-in-out;
