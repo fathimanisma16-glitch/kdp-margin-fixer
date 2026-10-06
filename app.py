@@ -15,6 +15,23 @@ st.set_page_config(
 )
 
 # =========================================================
+# HELPER: INSTANT PDF RASTERIZER (PREVIEW ENGINE)
+# =========================================================
+def render_pdf_page_to_image(pdf_bytes, page_index=0, scale=1.5):
+    """
+    Renders a specific page of a PDF bytes object into a PIL Image for on-screen display.
+    """
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(pdf_bytes)
+        if 0 <= page_index < len(pdf):
+            page = pdf[page_index]
+            return page.render(scale=scale).to_pil()
+    except Exception:
+        return None
+    return None
+
+# =========================================================
 # CONSTANTS & SPECIFICATIONS
 # =========================================================
 PAPER_MULTIPLIERS = {
@@ -131,7 +148,6 @@ def fix_rejected_cover(cover_pdf_bytes, target_w_in, target_h_in):
     target_w_pt = target_w_in * 72.0
     target_h_pt = target_h_in * 72.0
     
-    # Scale transformation to precisely match target envelope
     scale_x = target_w_pt / cur_w
     scale_y = target_h_pt / cur_h
     
@@ -163,8 +179,8 @@ with tab_interior:
     uploaded_file = st.file_uploader("Drop raw interior PDF", type=["pdf"], key="interior_uploader")
     
     if uploaded_file:
-        input_bytes = BytesIO(uploaded_file.read())
-        reader = PdfReader(input_bytes)
+        raw_pdf_bytes = uploaded_file.read()
+        reader = PdfReader(BytesIO(raw_pdf_bytes))
         total_pages = len(reader.pages)
         
         first_page = reader.pages[0]
@@ -207,13 +223,37 @@ with tab_interior:
                     
                 out_stream = BytesIO()
                 writer.write(out_stream)
+                fixed_bytes = out_stream.getvalue()
                 
             st.success("✅ Interior successfully converted to KDP specifications!")
+            
+            # --- LIVE INTERIOR PREVIEW SECTION ---
+            st.write("#### 👁️ Visual Preflight Verification")
+            st.caption("Verify how alternating gutters position the content away from the binding fold on opposite pages:")
+            
+            pv_col1, pv_col2 = st.columns(2)
+            img_p1 = render_pdf_page_to_image(fixed_bytes, page_index=0, scale=1.3)
+            img_p2 = render_pdf_page_to_image(fixed_bytes, page_index=1, scale=1.3) if total_pages > 1 else None
+            
+            with pv_col1:
+                st.markdown("**Page 1 (Recto / Right Page)**")
+                st.caption("⬅️ *Notice the wider gutter on the LEFT (Spine edge)*")
+                if img_p1:
+                    st.image(img_p1, use_container_width=True)
+            
+            with pv_col2:
+                st.markdown("**Page 2 (Verso / Left Page)**")
+                st.caption("➡️ *Notice the wider gutter on the RIGHT (Spine edge)*")
+                if img_p2:
+                    st.image(img_p2, use_container_width=True)
+            
+            st.divider()
             st.download_button(
                 label="📥 Download Print-Ready Interior PDF",
-                data=out_stream.getvalue(),
+                data=fixed_bytes,
                 file_name=f"kdp_ready_{uploaded_file.name}",
-                mime="application/pdf"
+                mime="application/pdf",
+                type="primary"
             )
 
 # ---------------------------------------------------------
@@ -222,7 +262,6 @@ with tab_interior:
 with tab_cover:
     st.subheader("Paperback Wrap Cover Studio")
     
-    # 1. Global Book Dimensions
     col_dim1, col_dim2, col_dim3 = st.columns([1.5, 1, 1.5])
     with col_dim1:
         preset_choice = st.selectbox("Trim Size", list(TRIM_PRESETS.keys()))
@@ -268,8 +307,8 @@ with tab_cover:
             
         with col_cov_right:
             if front_file:
-                st.write("**Front Cover Preview:**")
-                st.image(front_file, width=220)
+                st.write("**Front Cover Input:**")
+                st.image(front_file, width=200)
                 
                 if st.button("🚀 Generate Print-Ready Wrap PDF", type="primary"):
                     with st.spinner("Stitching cover wrap..."):
@@ -285,11 +324,20 @@ with tab_cover:
                             spine_text=spine_text
                         )
                     st.success("✅ Full panoramic wrap created and verified for KDP!")
+                    
+                    # --- LIVE COVER WRAP PREVIEW ---
+                    st.write("#### 👁️ Panoramic Wrap Visual Preview")
+                    st.caption(f"Dimensions: {total_w:.3f}\" × {total_h:.3f}\" (Back Cover | Spine | Front Cover)")
+                    wrap_preview_img = render_pdf_page_to_image(wrap_bytes, page_index=0, scale=1.0)
+                    if wrap_preview_img:
+                        st.image(wrap_preview_img, use_container_width=True)
+                    
                     st.download_button(
                         label="📥 Download KDP Wrap Cover (PDF)",
                         data=wrap_bytes,
                         file_name=f"kdp_cover_{trim_w}x{trim_h}_{page_count}p.pdf",
-                        mime="application/pdf"
+                        mime="application/pdf",
+                        type="primary"
                     )
             else:
                 st.info("👆 Upload your front cover image on the left to generate the complete wrap.")
@@ -309,9 +357,17 @@ with tab_cover:
                     fixed_bytes, orig_w, orig_h = fix_rejected_cover(input_bytes, total_w, total_h)
                     
                 st.success(f"✅ Converted from {orig_w:.2f}\" × {orig_h:.2f}\" ➔ **{total_w:.3f}\" × {total_h:.3f}\"** (Amazon Target)")
+                
+                # --- LIVE RESIZED COVER PREVIEW ---
+                st.write("#### 👁️ Conformed Wrap Visual Preview")
+                resized_preview_img = render_pdf_page_to_image(fixed_bytes, page_index=0, scale=1.0)
+                if resized_preview_img:
+                    st.image(resized_preview_img, use_container_width=True)
+                
                 st.download_button(
                     label="📥 Download Fixed Print-Ready Cover (PDF)",
                     data=fixed_bytes,
                     file_name=f"kdp_fixed_cover_{rejected_file.name}",
-                    mime="application/pdf"
+                    mime="application/pdf",
+                    type="primary"
                 )
