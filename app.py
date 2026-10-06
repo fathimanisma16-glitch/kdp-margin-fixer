@@ -1,8 +1,11 @@
 import streamlit as st
-from pypdf import PdfReader, PdfWriter, PageObject, Transformation
+import textwrap
 from io import BytesIO
+from pypdf import PdfReader, PdfWriter, PageObject, Transformation
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
+from PIL import Image
 
 # Page Configuration
 st.set_page_config(
@@ -12,8 +15,27 @@ st.set_page_config(
 )
 
 # =========================================================
-# HELPER FUNCTIONS: INTERIOR LOGIC
+# CONSTANTS & SPECIFICATIONS
 # =========================================================
+PAPER_MULTIPLIERS = {
+    "White Paper (B&W or Standard Color)": 0.002252,
+    "Cream Paper (B&W)": 0.0025,
+    "Premium Color Paper": 0.002347
+}
+
+TRIM_PRESETS = {
+    '6.0" × 9.0" (Standard Fiction / Non-Fiction)': (6.0, 9.0),
+    '8.5" × 11.0" (Notebooks, Workbooks, Coloring)': (8.5, 11.0),
+    '5.5" × 8.5" (Standard Digest)': (5.5, 8.5),
+    '5.0" × 8.0" (Small Pocket Book)': (5.0, 8.0),
+    '7.0" × 10.0" (Manuals & Activity Books)': (7.0, 10.0),
+    '8.5" × 8.5" (Square Children\'s Book)': (8.5, 8.5),
+    'Custom Size': (0.0, 0.0)
+}
+
+BLEED_IN = 0.125
+MIN_OUTSIDE_MARGIN_IN = 0.25
+
 def get_kdp_gutter_inches(page_count: int) -> float:
     if page_count <= 150:
         return 0.375
@@ -26,132 +48,116 @@ def get_kdp_gutter_inches(page_count: int) -> float:
     else:
         return 0.875
 
-MIN_OUTSIDE_MARGIN_IN = 0.25
-
 # =========================================================
-# HELPER FUNCTIONS: COVER TEMPLATE ENGINE
+# ENGINE: 1-CLICK WRAP COVER ASSEMBLER
 # =========================================================
-PAPER_MULTIPLIERS = {
-    "White Paper (B&W or Standard Color)": 0.002252,
-    "Cream Paper (B&W)": 0.0025,
-    "Premium Color Paper": 0.002347
-}
-
-TRIM_PRESETS = {
-    '6.0" × 9.0" (Most Popular)': (6.0, 9.0),
-    '8.5" × 11.0" (Notebooks & Workbooks)': (8.5, 11.0),
-    '5.5" × 8.5" (Standard Digest)': (5.5, 8.5),
-    '5.0" × 8.0" (Novels)': (5.0, 8.0),
-    '7.0" × 10.0" (Activity Books)': (7.0, 10.0),
-    '8.5" × 8.5" (Square / Children\'s)': (8.5, 8.5),
-    'Custom Size': (0.0, 0.0)
-}
-
-def generate_cover_template_pdf(trim_w, trim_h, spine_w, total_w, total_h, page_count, paper_type):
+def assemble_wrap_cover(front_img_bytes, trim_w, trim_h, spine_w, total_w, total_h, bg_hex, back_blurb="", spine_text=""):
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=(total_w * 72, total_h * 72))
     
     w_pt = total_w * 72
     h_pt = total_h * 72
-    bleed_pt = 0.125 * 72
-    spine_pt = spine_w * 72
+    bleed_pt = BLEED_IN * 72
     trim_w_pt = trim_w * 72
-    trim_h_pt = trim_h * 72
+    spine_pt = spine_w * 72
     
-    # 1. Background fill
-    c.setFillColor(colors.HexColor("#FAFAFA"))
-    c.rect(0, 0, w_pt, h_pt, fill=True, stroke=False)
-    
-    # 2. Bleed zones (0.125" cut strip)
-    c.setFillColor(colors.HexColor("#FEE2E2"))
-    c.rect(0, 0, w_pt, bleed_pt, fill=True, stroke=False)
-    c.rect(0, h_pt - bleed_pt, w_pt, bleed_pt, fill=True, stroke=False)
-    c.rect(0, 0, bleed_pt, h_pt, fill=True, stroke=False)
-    c.rect(w_pt - bleed_pt, 0, bleed_pt, h_pt, fill=True, stroke=False)
-    
-    # 3. Spine zone
     spine_x1 = bleed_pt + trim_w_pt
     spine_x2 = spine_x1 + spine_pt
-    c.setFillColor(colors.HexColor("#EFF6FF"))
-    c.rect(spine_x1, bleed_pt, spine_pt, trim_h_pt, fill=True, stroke=False)
     
-    # 4. Trim cut lines (outer dashed red)
-    c.setStrokeColor(colors.HexColor("#EF4444"))
-    c.setLineWidth(1)
-    c.setDash(4, 4)
-    c.rect(bleed_pt, bleed_pt, w_pt - (2 * bleed_pt), h_pt - (2 * bleed_pt), fill=False, stroke=True)
+    # 1. Fill entire canvas (Back Cover + Spine) with the chosen theme color
+    c.setFillColor(colors.HexColor(bg_hex))
+    c.rect(0, 0, w_pt, h_pt, fill=True, stroke=False)
     
-    # 5. Spine fold lines (blue)
-    c.setStrokeColor(colors.HexColor("#3B82F6"))
-    c.line(spine_x1, 0, spine_x1, h_pt)
-    c.line(spine_x2, 0, spine_x2, h_pt)
-    c.setDash()
+    # 2. Draw Front Cover Image (spans from spine right-edge to outer right bleed)
+    front_area_w = trim_w_pt + bleed_pt
+    front_reader = ImageReader(front_img_bytes)
+    c.drawImage(front_reader, spine_x2, 0, width=front_area_w, height=h_pt)
     
-    # 6. Safe zones (0.125" inside trim)
-    safe_pt = 0.125 * 72
-    c.setStrokeColor(colors.HexColor("#10B981"))
-    c.setLineWidth(0.8)
-    c.setDash(2, 2)
-    # Back cover safe area
-    c.rect(bleed_pt + safe_pt, bleed_pt + safe_pt, trim_w_pt - (2 * safe_pt), trim_h_pt - (2 * safe_pt), fill=False, stroke=True)
-    # Front cover safe area
-    c.rect(spine_x2 + safe_pt, bleed_pt + safe_pt, trim_w_pt - (2 * safe_pt), trim_h_pt - (2 * safe_pt), fill=False, stroke=True)
-    c.setDash()
-    
-    # 7. Barcode Safe Box (Bottom right of back cover: 2.0" x 1.2")
+    # 3. Barcode Safe Reservation Box on Back Cover (White rectangle for Amazon barcode scan)
     bc_w_pt = 2.0 * 72
     bc_h_pt = 1.2 * 72
     bc_x = spine_x1 - bc_w_pt - (0.25 * 72)
     bc_y = bleed_pt + (0.25 * 72)
-    c.setFillColor(colors.HexColor("#FEE2E2"))
-    c.setStrokeColor(colors.HexColor("#EF4444"))
-    c.rect(bc_x, bc_y, bc_w_pt, bc_h_pt, fill=True, stroke=True)
-    c.setFillColor(colors.HexColor("#991B1B"))
-    c.setFont("Helvetica-Bold", 8)
-    c.drawCentredString(bc_x + bc_w_pt / 2, bc_y + bc_h_pt / 2 + 3, "BARCODE LOCATION")
-    c.setFont("Helvetica", 6.5)
-    c.drawCentredString(bc_x + bc_w_pt / 2, bc_y + bc_h_pt / 2 - 7, "Keep clear of text & critical art")
+    c.setFillColor(colors.white)
+    c.rect(bc_x, bc_y, bc_w_pt, bc_h_pt, fill=True, stroke=False)
     
-    # 8. Visual Text Labels
-    c.setFillColor(colors.HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString((bleed_pt + spine_x1) / 2, h_pt / 2 + 15, "BACK COVER")
-    c.drawCentredString((spine_x2 + w_pt - bleed_pt) / 2, h_pt / 2 + 15, "FRONT COVER")
-    
-    if spine_pt >= 24:
+    # 4. Optional: Spine Text (centered vertically along the spine)
+    if spine_text.strip() and spine_pt >= 24:
         c.saveState()
-        c.translate(spine_x1 + spine_pt / 2, h_pt / 2)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 10)
+        c.translate(spine_x1 + (spine_pt / 2), h_pt / 2)
         c.rotate(270)
-        c.drawCentredString(0, -3, f"SPINE ({spine_w:.3f}\")")
+        c.drawCentredString(0, -3.5, spine_text.strip())
         c.restoreState()
         
-    c.setFont("Helvetica", 9)
-    c.setFillColor(colors.HexColor("#6B7280"))
-    c.drawCentredString((bleed_pt + spine_x1) / 2, h_pt / 2 - 6, f"Trim: {trim_w}\" × {trim_h}\"")
-    c.drawCentredString((spine_x2 + w_pt - bleed_pt) / 2, h_pt / 2 - 6, f"Trim: {trim_w}\" × {trim_h}\"")
-    
-    # Header Banner
-    c.setFillColor(colors.HexColor("#1E3A8A"))
-    c.setFont("Helvetica-Bold", 8.5)
-    c.drawString(bleed_pt + 10, h_pt - bleed_pt - 18, 
-                 f"KDP COVER TEMPLATE • Canvas: {total_w:.3f}\" × {total_h:.3f}\" ({int(total_w * 300)} × {int(total_h * 300)} px @ 300 DPI) • {page_count} Pages • {paper_type}")
-    
+    # 5. Optional: Back Cover Blurb Text
+    if back_blurb.strip():
+        text_safe_x = bleed_pt + (0.4 * 72)
+        text_safe_w = trim_w_pt - (0.8 * 72)
+        top_y = h_pt - bleed_pt - (0.6 * 72)
+        
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica", 10)
+        
+        lines = []
+        for paragraph in back_blurb.split("\n"):
+            if paragraph.strip():
+                lines.extend(textwrap.wrap(paragraph, width=int(text_safe_w / 6.5)))
+                lines.append("")  # paragraph spacing
+            else:
+                lines.append("")
+                
+        line_height = 14
+        curr_y = top_y
+        for line in lines:
+            if curr_y > bc_y + bc_h_pt + 20: # Keep above barcode box
+                c.drawString(text_safe_x, curr_y, line)
+                curr_y -= line_height
+
     c.save()
     return buf.getvalue()
+
+# =========================================================
+# ENGINE: KDP REJECT DIMENSION RESIZER
+# =========================================================
+def fix_rejected_cover(cover_pdf_bytes, target_w_in, target_h_in):
+    reader = PdfReader(cover_pdf_bytes)
+    page = reader.pages[0]
+    
+    cur_w = float(page.mediabox.width)
+    cur_h = float(page.mediabox.height)
+    
+    target_w_pt = target_w_in * 72.0
+    target_h_pt = target_h_in * 72.0
+    
+    # Scale transformation to precisely match target envelope
+    scale_x = target_w_pt / cur_w
+    scale_y = target_h_pt / cur_h
+    
+    writer = PdfWriter()
+    new_page = PageObject.create_blank_page(width=target_w_pt, height=target_h_pt)
+    transform = Transformation().scale(scale_x, scale_y)
+    new_page.merge_transformed_page(page, transform)
+    writer.add_page(new_page)
+    
+    out_buf = BytesIO()
+    writer.write(out_buf)
+    return out_buf.getvalue(), cur_w / 72.0, cur_h / 72.0
 
 # =========================================================
 # APP INTERFACE
 # =========================================================
 st.title("📚 KDP Preflight Studio")
-st.caption("All-in-one preflight utility for Amazon Kindle Direct Publishing print-on-demand books.")
+st.caption("All-in-one preflight and formatting utility for Amazon Kindle Direct Publishing print books.")
 
-tab_interior, tab_cover = st.tabs(["📖 Interior Margin Fixer", "🎨 Cover Calculator & Template Generator"])
+tab_interior, tab_cover = st.tabs(["📖 Interior Margin Fixer", "🎨 Cover Studio"])
 
 # ---------------------------------------------------------
 # TAB 1: INTERIOR MARGIN FIXER
 # ---------------------------------------------------------
 with tab_interior:
-    st.subheader("Auto-Fix Interior Gutters & Safe Zones")
+    st.subheader("Auto-Fix Interior Margins & Spine Gutters")
     st.markdown("Upload any raw multi-page PDF from **Canva, InDesign, or Word**. The engine recalculates alternating inside binding gutters and scales content safely.")
     
     uploaded_file = st.file_uploader("Drop raw interior PDF", type=["pdf"], key="interior_uploader")
@@ -211,79 +217,101 @@ with tab_interior:
             )
 
 # ---------------------------------------------------------
-# TAB 2: COVER CALCULATOR & TEMPLATE GENERATOR
+# TAB 2: COVER STUDIO
 # ---------------------------------------------------------
 with tab_cover:
-    st.subheader("Paperback Wrap Cover Calculator & Guide Generator")
-    st.markdown("Calculate exact spine thickness, complete wrap dimensions, and download a custom guide template to design over in **Canva** or **Photoshop**.")
+    st.subheader("Paperback Wrap Cover Studio")
     
-    col_left, col_right = st.columns([1, 1], gap="medium")
-    
-    with col_left:
-        st.write("##### 1. Book Specifications")
-        preset_choice = st.selectbox("Trim Size Preset", list(TRIM_PRESETS.keys()))
-        
+    # 1. Global Book Dimensions
+    col_dim1, col_dim2, col_dim3 = st.columns([1.5, 1, 1.5])
+    with col_dim1:
+        preset_choice = st.selectbox("Trim Size", list(TRIM_PRESETS.keys()))
         if preset_choice == "Custom Size":
-            c_w = st.number_input("Custom Width (inches)", min_value=4.0, max_value=12.0, value=6.0, step=0.1)
-            c_h = st.number_input("Custom Height (inches)", min_value=4.0, max_value=16.0, value=9.0, step=0.1)
-            trim_w, trim_h = c_w, c_h
+            trim_w = st.number_input("Width (in)", value=6.0, step=0.1)
+            trim_h = st.number_input("Height (in)", value=9.0, step=0.1)
         else:
             trim_w, trim_h = TRIM_PRESETS[preset_choice]
             
-        page_count = st.number_input("Exact Interior Page Count", min_value=24, max_value=828, value=120, step=2)
-        paper_type = st.selectbox("Paper & Interior Color", list(PAPER_MULTIPLIERS.keys()))
+    with col_dim2:
+        page_count = st.number_input("Total Pages", min_value=24, max_value=828, value=120, step=2)
         
-        # Calculations
-        multiplier = PAPER_MULTIPLIERS[paper_type]
-        spine_w = page_count * multiplier
-        total_w = (2 * trim_w) + spine_w + 0.25   # 0.125" bleed on left + right = 0.25"
-        total_h = trim_h + 0.25                  # 0.125" bleed on top + bottom = 0.25"
+    with col_dim3:
+        paper_type = st.selectbox("Paper Choice", list(PAPER_MULTIPLIERS.keys()))
         
-        # Pixels at 300 DPI (print standard)
-        px_w = round(total_w * 300)
-        px_h = round(total_h * 300)
-        
-    with col_right:
-        st.write("##### 2. Exact Cover Dimensions")
-        
-        m1, m2 = st.columns(2)
-        m1.metric("Spine Width", f"{spine_w:.3f}\" / {spine_w * 25.4:.1f} mm")
-        m2.metric("Total Width", f"{total_w:.3f}\" / {total_w * 25.4:.1f} mm")
-        
-        m3, m4 = st.columns(2)
-        m3.metric("Total Height", f"{total_h:.3f}\" / {total_h * 25.4:.1f} mm")
-        m4.metric("Canva 300 DPI Size", f"{px_w} × {px_h} px")
-        
-        st.markdown(f"""
-        > **Canva Custom Size Setup:**
-        > * Create a new design with custom dimensions: **{total_w:.3f} × {total_h:.3f} inches** (or **{px_w} × {px_h} px**).
-        """)
-        
-        # Generate Template Button
-        template_bytes = generate_cover_template_pdf(
-            trim_w=trim_w,
-            trim_h=trim_h,
-            spine_w=spine_w,
-            total_w=total_w,
-            total_h=total_h,
-            page_count=page_count,
-            paper_type=paper_type
-        )
-        
-        st.download_button(
-            label="🎨 Download Custom KDP Cover Guide (PDF)",
-            data=template_bytes,
-            file_name=f"kdp_cover_template_{trim_w}x{trim_h}_{page_count}p.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
-        
+    multiplier = PAPER_MULTIPLIERS[paper_type]
+    spine_w = page_count * multiplier
+    total_w = (2 * trim_w) + spine_w + (2 * BLEED_IN)
+    total_h = trim_h + (2 * BLEED_IN)
+    
+    st.info(f"📐 **KDP Target Dimensions:** Total Canvas = **{total_w:.3f}\" × {total_h:.3f}\"** | Spine Width = **{spine_w:.3f}\"**")
+    
+    cover_mode = st.radio(
+        "Choose Cover Mode:",
+        ["✨ 1-Click Wrap Assembler (Upload Front Cover Only)", "🔧 KDP Reject Fixer (Resize Existing Wrap PDF)"],
+        horizontal=True
+    )
+    
     st.divider()
-    st.write("##### 📖 How to Design Your Cover with This Template in Canva:")
-    st.markdown("""
-    1. Click **Download Custom KDP Cover Guide (PDF)** above.
-    2. In **Canva**, click **Create a design** $\rightarrow$ **Custom size** $\rightarrow$ enter the exact dimensions shown in the metric card above.
-    3. Upload the downloaded template PDF into Canva and drag it onto the canvas as the background layer (lock it).
-    4. Design your front cover, spine text, and back cover over the guide. Keep all essential titles inside the **green dashed safe lines** and avoid placing art over the **red barcode box**.
-    5. Delete or hide the guide template layer, then export as **PDF Print**!
-    """)
+    
+    # MODE 1: 1-CLICK WRAP ASSEMBLER
+    if "1-Click" in cover_mode:
+        st.write("##### Assemble Full Panoramic Wrap from Front Cover")
+        st.caption("Upload just your front cover artwork. The tool generates a matching back cover, spine, and barcode safe zone.")
+        
+        col_cov_left, col_cov_right = st.columns([1, 1], gap="medium")
+        
+        with col_cov_left:
+            front_file = st.file_uploader("Upload Front Cover Image (PNG or JPG)", type=["png", "jpg", "jpeg"])
+            bg_color = st.color_picker("Back Cover & Spine Color", value="#0F172A")
+            spine_text = st.text_input("Spine Title (optional - recommended for 80+ pages)", placeholder="Book Title - Author Name")
+            back_blurb = st.text_area("Back Cover Synopsis / Text (optional)", placeholder="Write a brief description or bullet points for the back cover...", height=130)
+            
+        with col_cov_right:
+            if front_file:
+                st.write("**Front Cover Preview:**")
+                st.image(front_file, width=220)
+                
+                if st.button("🚀 Generate Print-Ready Wrap PDF", type="primary"):
+                    with st.spinner("Stitching cover wrap..."):
+                        wrap_bytes = assemble_wrap_cover(
+                            front_img_bytes=BytesIO(front_file.read()),
+                            trim_w=trim_w,
+                            trim_h=trim_h,
+                            spine_w=spine_w,
+                            total_w=total_w,
+                            total_h=total_h,
+                            bg_hex=bg_color,
+                            back_blurb=back_blurb,
+                            spine_text=spine_text
+                        )
+                    st.success("✅ Full panoramic wrap created and verified for KDP!")
+                    st.download_button(
+                        label="📥 Download KDP Wrap Cover (PDF)",
+                        data=wrap_bytes,
+                        file_name=f"kdp_cover_{trim_w}x{trim_h}_{page_count}p.pdf",
+                        mime="application/pdf"
+                    )
+            else:
+                st.info("👆 Upload your front cover image on the left to generate the complete wrap.")
+
+    # MODE 2: REJECT FIXER
+    else:
+        st.write("##### Fix Rejected Full-Wrap PDF")
+        st.caption("Amazon rejected your cover because the dimensions didn't match? Upload the PDF here to scale and conform it to KDP's exact measurements.")
+        
+        rejected_file = st.file_uploader("Upload Rejected Cover PDF", type=["pdf"], key="rejected_cov_uploader")
+        
+        if rejected_file:
+            input_bytes = BytesIO(rejected_file.read())
+            
+            if st.button("🚀 Re-calculate & Conform Dimensions", type="primary"):
+                with st.spinner("Resizing document to exact Amazon KDP bounds..."):
+                    fixed_bytes, orig_w, orig_h = fix_rejected_cover(input_bytes, total_w, total_h)
+                    
+                st.success(f"✅ Converted from {orig_w:.2f}\" × {orig_h:.2f}\" ➔ **{total_w:.3f}\" × {total_h:.3f}\"** (Amazon Target)")
+                st.download_button(
+                    label="📥 Download Fixed Print-Ready Cover (PDF)",
+                    data=fixed_bytes,
+                    file_name=f"kdp_fixed_cover_{rejected_file.name}",
+                    mime="application/pdf"
+                )
